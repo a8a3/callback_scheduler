@@ -37,9 +37,7 @@ public:
                 }
 
                 auto wakeTime = scheduledCallbacks_.top().when;
-                cv_.wait_until(lock, wakeTime, [this] {
-                    return !isRunning_;
-                });
+                cv_.wait_until(lock, wakeTime);
                 if (!isRunning_) return;
                 if (scheduledCallbacks_.empty()) continue;
 
@@ -54,7 +52,12 @@ public:
                         continue;
                     }
                     lock.unlock();
-                    cb();
+
+                    try {
+                        cb();
+                    } catch (...) {
+                        // do something
+                    }
                 }
             }
         }};
@@ -72,10 +75,15 @@ public:
     }
 
     CallbackId Schedule(Callback callback, TimePoint when) {
-        std::lock_guard lock{mutex_};
-        CallbackId id{nextId_++};
-        scheduledCallbacks_.emplace(id, std::move(callback), when);
-        cv_.notify_one();
+        CallbackId id{0};
+        bool needToNotify{false};
+        {
+            std::lock_guard lock{mutex_};
+            id = nextId_++;
+            needToNotify = scheduledCallbacks_.empty() || scheduledCallbacks_.top().when > when;
+            scheduledCallbacks_.emplace(id, std::move(callback), when);
+        }
+        if (needToNotify) cv_.notify_one();
         return id;
     }
 

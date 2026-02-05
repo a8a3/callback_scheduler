@@ -440,3 +440,38 @@ TEST_F(CallbackSchedulerFixture, CancelManyCallbacks) {
     
     EXPECT_EQ(50, counter) << "50 callbacks should execute, 50 cancelled";
 }
+
+TEST_F(CallbackSchedulerFixture, EarlierCallbackExecutesOnTime) {
+    auto now = std::chrono::system_clock::now();
+    auto later = now + 10s;
+    auto earlier = now + 2s;
+
+    getScheduler().Schedule([]{ /* far from now */ }, later);
+    
+    std::this_thread::sleep_for(1s);  // worker is waiting, 1 sec passed
+    
+    std::atomic_bool executed{false};
+    getScheduler().Schedule([&executed] { executed = true; }, earlier);
+    
+    std::this_thread::sleep_for(1s); // 2 secs passed
+    EXPECT_TRUE(executed) << "Early callback should have executed by now!";
+}
+
+TEST_F(CallbackSchedulerFixture, MultipleCallbacksThrow) {
+    std::atomic_int counter{0};
+    auto do_throw = [] { throw std::runtime_error("Test exception"); };
+    auto inc = [&counter] { ++counter; };
+    auto sync = [this] { SetDone(); };
+
+    auto now = std::chrono::system_clock::now();
+    getScheduler().Schedule(do_throw, now + 100ms);
+    getScheduler().Schedule(inc, now + 200ms);
+    getScheduler().Schedule(do_throw, now + 300ms);
+    getScheduler().Schedule(inc, now + 400ms);
+    getScheduler().Schedule(do_throw, now + 500ms);
+    getScheduler().Schedule(sync, now + 600ms);
+    
+    WaitForDone();
+    
+    EXPECT_EQ(2, counter) << "Non-throwing callbacks should execute despite exceptions";
+}
