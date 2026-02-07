@@ -3,10 +3,11 @@
 #include <chrono>
 #include <condition_variable>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <queue>
 #include <thread>
-#include <unordered_set>
+#include <unordered_map>
 
 using TimePoint = std::chrono::time_point<std::chrono::system_clock>;
 using Callback = std::function<void()>;
@@ -15,11 +16,6 @@ using CallbackId = uint64_t;
 struct ScheduledCallback{
     CallbackId id;
     Callback cb;
-    TimePoint when;
-
-    friend bool operator<(const ScheduledCallback& a, const ScheduledCallback& b) {
-        return a.when > b.when;
-    }
 };
 
 class CallbackScheduler {
@@ -36,21 +32,18 @@ public:
                     continue;
                 }
 
-                auto wakeTime = scheduledCallbacks_.top().when;
+                const auto wakeTime = scheduledCallbacks_.begin()->first;
                 cv_.wait_until(lock, wakeTime);
                 if (!isRunning_) return;
                 if (scheduledCallbacks_.empty()) continue;
 
-                const auto& next = scheduledCallbacks_.top();
-                if (next.when <= std::chrono::system_clock::now()) {
-                    auto cb = next.cb;
-                    auto id = next.id;
-                    scheduledCallbacks_.pop();
+                const auto next = scheduledCallbacks_.begin();
+                if (next->first <= std::chrono::system_clock::now()) {
+                    auto cb = next->second.cb;
+                    auto id = next->second.id;
+                    scheduledCallbacks_.erase(next);
+                    idMap_.erase(id);
 
-                    if (cancelledCallbacks_.count(id)) {
-                        cancelledCallbacks_.erase(id);
-                        continue;
-                    }
                     lock.unlock();
 
                     try {
@@ -80,26 +73,32 @@ public:
         {
             std::lock_guard lock{mutex_};
             id = nextId_++;
-            needToNotify = scheduledCallbacks_.empty() || scheduledCallbacks_.top().when > when;
-            scheduledCallbacks_.emplace(id, std::move(callback), when);
+            needToNotify = scheduledCallbacks_.empty() || scheduledCallbacks_.begin()->first > when;
+            auto cbIter = scheduledCallbacks_.emplace(std::make_pair(when, ScheduledCallback{id, std::move(callback)}));
+            idMap_.emplace(std::make_pair(id, cbIter));
         }
         if (needToNotify) cv_.notify_one();
         return id;
     }
 
-    void Cancel(CallbackId id) {
+    bool Cancel(CallbackId id) {
         std::lock_guard lock{mutex_};
-        cancelledCallbacks_.insert(id);
+        auto cbIter = idMap_.find(id);
+
+        if (std::end(idMap_) == cbIter) return false;
+        scheduledCallbacks_.erase(cbIter->second);
+        idMap_.erase(cbIter);
+        return true;
     }
 
 private:
-    std::priority_queue<ScheduledCallback> scheduledCallbacks_;
+    std::multimap<TimePoint, ScheduledCallback> scheduledCallbacks_;
+    std::unordered_map<CallbackId, decltype(scheduledCallbacks_)::iterator> idMap_;
+
     std::thread worker_;  // thread in context of which callbacks are executed
     std::atomic_bool isRunning_{true};
     std::mutex mutex_;
     std::condition_variable cv_;
 
-    // NB! those two always used with mutex held
     CallbackId nextId_{0};
-    std::unordered_set<CallbackId> cancelledCallbacks_;
 };
