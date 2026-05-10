@@ -28,7 +28,7 @@ class CallbackScheduler {
 public:
     CallbackScheduler() {
         worker_ = std::thread{[this] () {
-            while (isRunning_) {
+            while (true) {
                 std::unique_lock lock{mutex_};
                 if (scheduledCallbacks_.empty()) {
                     cv_.wait(lock, [this] {
@@ -97,13 +97,13 @@ public:
 private:
     std::priority_queue<ScheduledCallback> scheduledCallbacks_;
     std::thread worker_;  // thread in context of which callbacks are executed
-    std::atomic_bool isRunning_{true};
     std::mutex mutex_;
     std::condition_variable cv_;
 
-    // NB! those two always used with mutex held
+    // NB! those three always used with mutex held
     CallbackId nextId_{0};
     std::unordered_set<CallbackId> cancelledCallbacks_;
+    bool isRunning_{true};
 };
 
 } // namespace lazy_cancellation

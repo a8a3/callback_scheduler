@@ -24,7 +24,7 @@ class CallbackScheduler {
 public:
     CallbackScheduler() {
         worker_ = std::thread{[this] () {
-            while (isRunning_) {
+            while (true) {
                 std::unique_lock lock{mutex_};
                 if (scheduledCallbacks_.empty()) {
                     cv_.wait(lock, [this] {
@@ -98,7 +98,7 @@ private:
     std::unordered_map<CallbackId, decltype(scheduledCallbacks_)::iterator> idMap_;
 
     std::thread worker_;  // thread in context of which callbacks are executed
-    std::atomic_bool isRunning_{true};
+    bool isRunning_{true};
     std::mutex mutex_;
     std::condition_variable cv_;
 
